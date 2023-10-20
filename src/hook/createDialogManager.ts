@@ -17,11 +17,11 @@ export interface ComponentStore<T extends Component> {
   isCache?: boolean; // 是否缓存
 }
 
-export const createModalManager = () => {
+export const createDialogManager = () => {
   const componentStore: { [key: string]: ComponentStore<Component> } =
     shallowReactive({});
 
-  const setModal = <T extends Component>(data: ComponentStore<T>) => {
+  const setDialog = <T extends Component>(data: ComponentStore<T>) => {
     // 设置key
     const componentKey =
       data.key ||
@@ -38,7 +38,7 @@ export const createModalManager = () => {
           any
         >
       ).__name ||
-      "DEFAULT_MODAL";
+      "DEFAULT_Dialog";
     // 设置显示
     data.props.visible = true;
     // 设置关闭回调
@@ -82,7 +82,7 @@ export const createModalManager = () => {
       key,
       isCache: false,
     };
-    setModal(openParams as ComponentProps<T>);
+    setDialog(openParams as ComponentProps<T>);
   };
 
   const openInCache = <T extends Component>(
@@ -99,7 +99,7 @@ export const createModalManager = () => {
       key,
       isCache: true,
     };
-    setModal(openParams as ComponentProps<T>);
+    setDialog(openParams as ComponentProps<T>);
   };
   const component = () => h(DynamicDialog, { componentStore });
   component.open = open;

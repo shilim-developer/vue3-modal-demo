@@ -9,7 +9,7 @@
 
 <script lang="ts" setup>
 import type { ComponentStore } from "@/hook/createDialogManager";
-import { Component } from "vue";
+import type { Component } from "vue";
 
 defineProps<{
   componentStore: { [key: string]: ComponentStore<Component> };
