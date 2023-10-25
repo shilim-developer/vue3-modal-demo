@@ -157,7 +157,7 @@ defineExpose({
 缺点：
 1. 父组件还是需要维护多个ref
 2. 通过ref去调用弹窗组件的方法不是个好的操作，容易直接通过ref直接去修改了弹窗内部的数据，导致混乱，在vue2可能会有，但是定好了规范其实不会出现，vue3有expose也会使不暴露的内容不被提示，也避免了这种问题
-3. 组件会一直存在，每次调用open方法时都需要重置一下数据，vue2可以object.assign(this.$data,this.$options.data())解决，vue3处理就麻烦一点
+3. 弹窗组件会一直存在，每次调用open方法时都需要重置一下数据，vue2可以object.assign(this.$data,this.$options.data())解决，vue3处理就麻烦一点
 
 # 使用DialogManager打开弹窗
 
@@ -170,5 +170,196 @@ DialogManager.open({
 })
 ```
 
-然后想到动态组件就想到
-这个主要的想法是受到createTemplatePromise的影响，希望命令式调用弹窗，
+然后想到动态组件就想到component组件，通过一个弹窗列表去管理弹窗，每次open时，把弹窗组件加入到弹窗列表中，通过component组件去渲染弹窗组件。
+
+也参考了一下createTemplatePromise，希望命令式调用弹窗。因为考虑到可以缓存弹窗，选择用object去存储，key作为组件的唯一标识。参数通过props来传递，因为现在emits也会在props作为onXXX参数，所以只要推导props的类型然后通过props传递就行。 好了，上代码：
+
+**createDialogManager.ts**
+
+```javascript
+import DynamicDialog from "@/components/DynamicDialog.vue";
+import { DialogComponent } from "@/models/dialog";
+import { ComponentProps } from "@/types/vue-type-helper";
+import {
+  shallowReactive,
+  type Component,
+  type ComponentOptionsBase,
+  reactive,
+  h,
+} from "vue";
+
+export interface ComponentStore<T extends Component> {
+  component: Component; // 模态框组件
+  props: (ComponentProps<T> extends any ? {} : ComponentProps<Component>) &
+    DialogComponent.Props; // 模态框参数
+  key?: string; // 唯一标识
+  isCache?: boolean; // 是否缓存
+}
+
+export const createDialogManager = () => {
+  const componentStore: { [key: string]: ComponentStore<Component> } =
+    shallowReactive({});
+
+  const setDialog = <T extends Component>(data: ComponentStore<T>) => {
+    // 设置key
+    const componentKey =
+      data.key ||
+      data.component.name ||
+      (
+        data.component as ComponentOptionsBase<
+          any,
+          any,
+          any,
+          any,
+          any,
+          any,
+          any,
+          any
+        >
+      ).__name ||
+      "DEFAULT_Dialog";
+    // 设置显示
+    data.props.visible = true;
+    // 设置关闭回调
+    data.props.onClosed = () => {
+      if (!data.isCache) {
+        delete componentStore[componentKey];
+      } else {
+        componentStore[componentKey].props.visible = false;
+      }
+    };
+    // 已存在模态框
+    if (Reflect.has(componentStore, componentKey)) {
+      // 缓存的组件，直接修改props
+      if (data.isCache) {
+        Object.assign(componentStore[componentKey].props, {
+          ...data.props,
+          visible: true,
+        });
+      } else {
+        // 不缓存组件，删除重新创建
+        delete componentStore[componentKey];
+        componentStore[componentKey] = { ...data, props: reactive(data.props) };
+      }
+    } else {
+      // 新模态框
+      componentStore[componentKey] = { ...data, props: reactive(data.props) };
+    }
+  };
+
+  const open = <T extends Component>(
+    component: T,
+    props: Omit<
+      ComponentProps<T>,
+      "visible" | "onClosed"
+    > = {} as ComponentProps<T>,
+    key?: string
+  ) => {
+    const openParams = {
+      component,
+      props,
+      key,
+      isCache: false,
+    };
+    setDialog(openParams as ComponentProps<T>);
+  };
+
+  const openInCache = <T extends Component>(
+    component: T,
+    props: Omit<
+      ComponentProps<T>,
+      "visible" | "onClosed"
+    > = {} as ComponentProps<T>,
+    key?: string
+  ) => {
+    const openParams = {
+      component,
+      props,
+      key,
+      isCache: true,
+    };
+    setDialog(openParams as ComponentProps<T>);
+  };
+  const component = () => h(DynamicDialog, { componentStore });
+  component.open = open;
+  component.openInCache = openInCache;
+  return component;
+};
+```
+
+使用：
+```html
+<template>
+  <el-config-provider namespace="shilim">
+    <el-button type="primary" @click="openDialogManageDialogCache">
+      打开dialogManager弹窗(缓存)
+    </el-button>
+    <DialogManager />
+  </el-config-provider>
+</template>
+
+<script setup lang="ts">
+import { createDialogManager } from "./hook/createDialogManager";
+
+const DialogManager = createDialogManager();
+const openDialogManageDialog = () => {
+  DialogManager.open(DialogManagerDialog, {
+    content: "我是DialogManagerDialog弹窗",
+  });
+};
+const openDialogManageDialogCache = () => {
+  DialogManager.openInCache(
+    DialogManagerDialog,
+    {
+      content: "我是DialogManagerDialog弹窗",
+    },
+    "DialogManagerDialogCache"
+  );
+};
+</script>
+```
+
+**弹窗组件**
+```html
+<template>
+  <ElDialog :model-value="visible" title="dialogManagerDialog" @closed="closed">
+    <div>{{ content }}</div>
+    <ElInput v-model="inputValue"></ElInput>
+  </ElDialog>
+</template>
+
+<script setup lang="ts">
+import { ElDialog, ElInput } from "element-plus";
+import { ref } from "vue";
+defineProps<{
+  visible: boolean;
+  content: string;
+}>();
+
+const inputValue = ref("");
+
+const emit = defineEmits<{
+  (event: "closed"): void;
+}>();
+
+const closed = () => {
+  emit("closed");
+};
+</script>
+
+```
+
+这样使用的优缺点如下：
+
+优点：
+1. 弹窗组件完全管理自己的状态，方便维护
+2. 只需要一个DialogManager节点就可以
+3. 代码中出现组件节点，不存在provide和vue-devtool调试问题
+
+缺点：
+1. 子组件必须props包含visible，onClosed两个固定的属性
+
+# 总结
+写博客期间也看到很多其他的方式，不过适合自己的才是最好的。
+
+最后放上[github](https://github.com/shilim-developer/vue3-modal-demo)代码。
